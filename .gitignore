@@ -1,0 +1,10 @@
+# Generated at runtime
+resources.env
+user-data.sh
+*.pem
+
+# Config is user-specific
+quickec2.conf
+
+# macOS
+.DS_Store
