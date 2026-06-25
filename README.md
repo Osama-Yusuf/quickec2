@@ -63,6 +63,7 @@ cd quickec2
 # Tear down everything
 ./cleanup.sh
 ```
+check example for using [quickec2.conf](#example-config)
 
 ## Connecting to Your Instance
 
