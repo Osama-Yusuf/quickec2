@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# quickec2 — Interactive AWS EC2 Deployment Boilerplate
-# Usage: ./quickec2.sh [--dry-run] [--config <file>] [--status] [--connect] [--help]
+# quickec2 — AWS EC2 Deployment Boilerplate (interactive & non-interactive)
+# Usage: ./quickec2.sh [flags]   — see --help for details
 set -euo pipefail
 export AWS_PAGER=""
 
@@ -21,6 +21,25 @@ source "${QUICKEC2_DIR}/lib/cleanup.sh"
 DRY_RUN="false"
 CONFIG_INPUT=""
 ACTION=""
+AUTO_APPROVE="false"
+
+# Non-interactive overrides (empty = not set = prompt)
+CLI_NAME=""
+CLI_REGION=""
+CLI_NETWORK=""
+CLI_TYPE=""
+CLI_OS=""
+CLI_VOLUME_SIZE=""
+CLI_VOLUME_TYPE=""
+CLI_SOFTWARE=""
+CLI_IP_TYPE=""
+CLI_PORTS=""
+CLI_KEY_PAIR=""
+CLI_EXISTING_KEY=""
+CLI_NODE_VERSION=""
+CLI_PYTHON_VERSION=""
+CLI_S3=""
+CLI_S3_BUCKET=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -37,6 +56,90 @@ while [[ $# -gt 0 ]]; do
       export AWS_PROFILE="${2:-}"
       [[ -z "$AWS_PROFILE" ]] && die "--profile requires a profile name"
       shift 2
+      ;;
+    --name)
+      CLI_NAME="${2:-}"
+      [[ -z "$CLI_NAME" ]] && die "--name requires a value"
+      shift 2
+      ;;
+    --region)
+      CLI_REGION="${2:-}"
+      [[ -z "$CLI_REGION" ]] && die "--region requires a value"
+      shift 2
+      ;;
+    --network)
+      CLI_NETWORK="${2:-}"
+      [[ -z "$CLI_NETWORK" ]] && die "--network requires a value (public or private)"
+      shift 2
+      ;;
+    --type)
+      CLI_TYPE="${2:-}"
+      [[ -z "$CLI_TYPE" ]] && die "--type requires a value"
+      shift 2
+      ;;
+    --os)
+      CLI_OS="${2:-}"
+      [[ -z "$CLI_OS" ]] && die "--os requires a value (al2023, ubuntu2204, ubuntu2404)"
+      shift 2
+      ;;
+    --volume-size)
+      CLI_VOLUME_SIZE="${2:-}"
+      [[ -z "$CLI_VOLUME_SIZE" ]] && die "--volume-size requires a value"
+      shift 2
+      ;;
+    --volume-type)
+      CLI_VOLUME_TYPE="${2:-}"
+      [[ -z "$CLI_VOLUME_TYPE" ]] && die "--volume-type requires a value (gp3, gp2, io1)"
+      shift 2
+      ;;
+    --software)
+      CLI_SOFTWARE="${2:-}"
+      [[ -z "$CLI_SOFTWARE" ]] && die "--software requires a value (comma-separated: docker,git,nodejs,python,nginx,certbot)"
+      shift 2
+      ;;
+    --ip-type)
+      CLI_IP_TYPE="${2:-}"
+      [[ -z "$CLI_IP_TYPE" ]] && die "--ip-type requires a value (auto or elastic)"
+      shift 2
+      ;;
+    --ports)
+      CLI_PORTS="${2:-}"
+      [[ -z "$CLI_PORTS" ]] && die "--ports requires a value (comma-separated port numbers)"
+      shift 2
+      ;;
+    --key-pair)
+      CLI_KEY_PAIR="${2:-}"
+      [[ -z "$CLI_KEY_PAIR" ]] && die "--key-pair requires a value (create, existing, none)"
+      shift 2
+      ;;
+    --existing-key)
+      CLI_EXISTING_KEY="${2:-}"
+      [[ -z "$CLI_EXISTING_KEY" ]] && die "--existing-key requires a value"
+      shift 2
+      ;;
+    --node-version)
+      CLI_NODE_VERSION="${2:-}"
+      [[ -z "$CLI_NODE_VERSION" ]] && die "--node-version requires a value"
+      shift 2
+      ;;
+    --python-version)
+      CLI_PYTHON_VERSION="${2:-}"
+      [[ -z "$CLI_PYTHON_VERSION" ]] && die "--python-version requires a value"
+      shift 2
+      ;;
+    --s3)
+      CLI_S3="yes"
+      shift
+      ;;
+    --s3-bucket)
+      CLI_S3_BUCKET="${2:-}"
+      [[ -z "$CLI_S3_BUCKET" ]] && die "--s3-bucket requires a value"
+      CLI_S3="yes"
+      shift 2
+      ;;
+    --yes|-y)
+      AUTO_APPROVE="true"
+      shift
       ;;
     --status)
       ACTION="status"
@@ -58,35 +161,57 @@ done
 
 export DRY_RUN
 
+# Detect non-interactive mode: if any deployment flags were passed, skip prompts for those
+has_cli_overrides() {
+  [[ -n "$CLI_REGION" || -n "$CLI_TYPE" || -n "$CLI_OS" || -n "$CLI_NETWORK" || -n "$CLI_SOFTWARE" || -n "$CLI_NAME" || -n "$CLI_VOLUME_SIZE" || -n "$CLI_VOLUME_TYPE" ]]
+}
+NON_INTERACTIVE="false"
+if has_cli_overrides; then
+  NON_INTERACTIVE="true"
+fi
+
 # ─── Help ─────────────────────────────────────────────────────────────────────
 show_help() {
   cat << 'EOF'
-quickec2 — Interactive AWS EC2 Deployment Boilerplate
+quickec2 — AWS EC2 Deployment Boilerplate
 
 Usage:
-  ./quickec2.sh                        Interactive deployment
-  ./quickec2.sh --dry-run              Full prompt flow, print commands, create nothing
-  ./quickec2.sh --config <file>        Deploy from saved config (skip prompts)
-  ./quickec2.sh --profile <name>       Use a specific AWS CLI profile
+  ./quickec2.sh                        Interactive deployment (prompts for everything)
+  ./quickec2.sh [flags] [-y]           Non-interactive deployment (flags set values, defaults fill the rest)
+  ./quickec2.sh --config <file>        Deploy from saved config
   ./quickec2.sh --status               Show instance state and SSM status
   ./quickec2.sh --connect              Connect via SSM (private) or SSH (public)
   ./quickec2.sh --help                 Show this help
 
-Cleanup:
-  ./cleanup.sh                         Tear down all created resources
+Deployment flags:
+  --name NAME              Project name (default: directory name)
+  --region REGION          AWS region (default: eu-west-1)
+  --network MODE           private or public (default: private)
+  --type TYPE              Instance type (default: t3.micro)
+  --os OS                  al2023, ubuntu2204, ubuntu2404 (default: al2023)
+  --volume-size GB         Root volume size in GB (default: 20)
+  --volume-type TYPE       gp3, gp2, io1 (default: gp3)
+  --software LIST          Comma-separated: docker,git,nodejs,python,nginx,certbot
+  --ip-type TYPE           auto or elastic (public only, default: auto)
+  --ports LIST             Inbound ports, comma-separated (public only, default: 22,80,443)
+  --key-pair OPTION        create, existing, none (public only, default: create)
+  --existing-key NAME      Existing key pair name (with --key-pair existing)
+  --node-version VER       18, 20, 22 (default: 20)
+  --python-version VER     3.11, 3.12 (default: 3.12)
+  --s3                     Create an S3 bucket
+  --s3-bucket NAME         Bucket name (implies --s3)
 
-Options:
-  --dry-run        Run through prompts, show config summary and cost estimate,
-                   print all AWS commands with [DRY RUN] prefix, then exit.
-  --config FILE    Load a previously saved quickec2.conf and deploy without
-                   interactive prompts.
-  --profile NAME   Use a named AWS CLI profile (sets AWS_PROFILE).
-  --status         Read resources.env and display current instance state,
-                   public IP, and SSM agent status.
-  --connect        Auto-detect connection method:
-                   - Private mode: aws ssm start-session
-                   - Public mode:  ssh -i key user@ip
-  --help           Show this help message.
+General flags:
+  --profile NAME           AWS CLI profile
+  --config FILE            Load saved config, skip all prompts
+  --dry-run                Show config + costs, print AWS commands, exit
+  --yes, -y                Skip confirmation prompt
+  --status                 Show instance state, IP, SSM status
+  --connect                Auto-detect: SSM (private) or SSH (public)
+  --help, -h               Show this help
+
+Cleanup:
+  ./cleanup.sh [--profile NAME]        Tear down all created resources
 EOF
 }
 
@@ -197,7 +322,11 @@ esac
 
 # ─── Banner ───────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}${CYAN}  quickec2 — Interactive AWS EC2 Deployment${NC}"
+if [[ "$NON_INTERACTIVE" == "true" ]]; then
+  echo -e "${BOLD}${CYAN}  quickec2 — Non-Interactive AWS EC2 Deployment${NC}"
+else
+  echo -e "${BOLD}${CYAN}  quickec2 — Interactive AWS EC2 Deployment${NC}"
+fi
 if [[ "$DRY_RUN" == "true" ]]; then
   echo -e "  ${DIM}(dry-run mode — no resources will be created)${NC}"
 fi
@@ -206,16 +335,19 @@ echo ""
 # ─── AWS Profile (prompt if not set via --profile or config) ──────────────────
 if [[ -z "${AWS_PROFILE:-}" ]]; then
   if [[ -n "$CONFIG_INPUT" ]]; then
-    # Peek into config for profile before full load
     local_profile=$(grep '^AWS_PROFILE=' "$CONFIG_INPUT" 2>/dev/null | cut -d= -f2- | tr -d '"' || echo "")
     if [[ -n "$local_profile" ]]; then
       export AWS_PROFILE="$local_profile"
     fi
   fi
   if [[ -z "${AWS_PROFILE:-}" ]]; then
-    echo -e "${BOLD}AWS profile${NC} [${DIM}default${NC}]: \c"
-    read -r profile_input
-    export AWS_PROFILE="${profile_input:-default}"
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+      export AWS_PROFILE="default"
+    else
+      echo -e "${BOLD}AWS profile${NC} [${DIM}default${NC}]: \c"
+      read -r profile_input
+      export AWS_PROFILE="${profile_input:-default}"
+    fi
   fi
 fi
 log_info "Using AWS profile: ${AWS_PROFILE}"
@@ -228,18 +360,65 @@ if [[ -f "$RESOURCES_FILE" && "$DRY_RUN" != "true" ]]; then
   echo ""
   log_warn "resources.env already exists from a previous deployment."
   log_warn "Run ./cleanup.sh first to tear down existing resources."
-  read -rp "Continue anyway? (yes/no): " confirm
-  if [[ "$confirm" != "yes" ]]; then
-    echo "Aborted."
-    exit 0
+  if [[ "$AUTO_APPROVE" == "true" ]]; then
+    log_info "Auto-approved: removing old resources.env"
+    rm -f "$RESOURCES_FILE"
+  else
+    read -rp "Continue anyway? (yes/no): " confirm
+    if [[ "$confirm" != "yes" ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+    rm -f "$RESOURCES_FILE"
   fi
-  rm -f "$RESOURCES_FILE"
 fi
 
-# ─── Interactive Prompts (or load config) ─────────────────────────────────────
+# ─── Configuration (config file > CLI flags > interactive prompts) ────────────
 if [[ -n "$CONFIG_INPUT" ]]; then
   log_step "Loading config from ${CONFIG_INPUT}"
   load_config "$CONFIG_INPUT"
+elif [[ "$NON_INTERACTIVE" == "true" ]]; then
+  log_step "Configuration (non-interactive)"
+
+  local_default=$(basename "$QUICKEC2_DIR")
+  PROJECT_NAME="${CLI_NAME:-$local_default}"
+  AWS_REGION="${CLI_REGION:-eu-west-1}"
+  NETWORK_MODE="${CLI_NETWORK:-private}"
+
+  IP_TYPE="${CLI_IP_TYPE:-auto}"
+  INBOUND_PORTS="${CLI_PORTS:-}"
+  KEY_PAIR_OPTION="none"
+  EXISTING_KEY_NAME=""
+  if [[ "$NETWORK_MODE" == "public" ]]; then
+    INBOUND_PORTS="${CLI_PORTS:-22,80,443}"
+    KEY_PAIR_OPTION="${CLI_KEY_PAIR:-create}"
+    if [[ "$KEY_PAIR_OPTION" == "existing" ]]; then
+      EXISTING_KEY_NAME="${CLI_EXISTING_KEY:-}"
+      [[ -z "$EXISTING_KEY_NAME" ]] && die "--existing-key is required when --key-pair is existing"
+    fi
+  fi
+
+  INSTANCE_TYPE="${CLI_TYPE:-t3.micro}"
+  OS_TYPE="${CLI_OS:-al2023}"
+  VOLUME_SIZE="${CLI_VOLUME_SIZE:-20}"
+  VOLUME_TYPE="${CLI_VOLUME_TYPE:-gp3}"
+  SOFTWARE="${CLI_SOFTWARE:-docker,git}"
+
+  NODE_VERSION=""
+  if [[ "$SOFTWARE" == *"nodejs"* ]]; then
+    NODE_VERSION="${CLI_NODE_VERSION:-20}"
+  fi
+
+  PYTHON_VERSION=""
+  if [[ "$SOFTWARE" == *"python"* ]]; then
+    PYTHON_VERSION="${CLI_PYTHON_VERSION:-3.12}"
+  fi
+
+  CREATE_S3="${CLI_S3:-no}"
+  S3_BUCKET_NAME=""
+  if [[ "$CREATE_S3" == "yes" ]]; then
+    S3_BUCKET_NAME="${CLI_S3_BUCKET:-${PROJECT_NAME}-${AWS_ACCOUNT_ID:-000000000000}}"
+  fi
 else
   log_step "Configuration"
   echo ""
@@ -318,7 +497,7 @@ print_summary
 print_cost_table "$INSTANCE_TYPE" "$NETWORK_MODE" "$IP_TYPE" "$VOLUME_SIZE" "$VOLUME_TYPE" "$CREATE_S3"
 
 # ─── Confirm ──────────────────────────────────────────────────────────────────
-if [[ "$DRY_RUN" != "true" ]]; then
+if [[ "$DRY_RUN" != "true" && "$AUTO_APPROVE" != "true" ]]; then
   read -rp "$(echo -e "${BOLD}Proceed with deployment? (yes/no):${NC} ")" confirm
   if [[ "$confirm" != "yes" ]]; then
     echo "Aborted."

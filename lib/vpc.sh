@@ -30,6 +30,29 @@ create_vpc() {
     --region "$region" > /dev/null 2>&1 || true
   log_success "VPC: ${VPC_ID}"
 
+  # Default SGs allow all traffic between members + all outbound.
+  # CIS AWS benchmark requires revoking these rules even if the SG is never used — best practice.
+  local default_sg
+  if [[ "$DRY_RUN" == "true" ]]; then
+    default_sg="sg-dry-default"
+    log_dry "aws ec2 describe-security-groups ... (get default SG)"
+  else
+    default_sg=$(aws ec2 describe-security-groups \
+      --filters "Name=vpc-id,Values=${VPC_ID}" "Name=group-name,Values=default" \
+      --region "$region" \
+      --query 'SecurityGroups[0].GroupId' \
+      --output text)
+  fi
+  aws_cmd ec2 revoke-security-group-ingress \
+    --group-id "$default_sg" \
+    --ip-permissions '[{"IpProtocol":"-1","UserIdGroupPairs":[{"GroupId":"'"$default_sg"'"}]}]' \
+    --region "$region" > /dev/null 2>&1 || true
+  aws_cmd ec2 revoke-security-group-egress \
+    --group-id "$default_sg" \
+    --ip-permissions '[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]' \
+    --region "$region" > /dev/null 2>&1 || true
+  log_success "Default security group locked down: ${default_sg}"
+
   # Internet Gateway
   log_info "Creating Internet Gateway..."
   IGW_ID=$(aws_cmd ec2 create-internet-gateway \
