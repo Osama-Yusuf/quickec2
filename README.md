@@ -51,7 +51,7 @@ cd quickec2
 # Preview all commands without creating anything
 ./quickec2.sh --dry-run
 
-# Deploy from saved config (skip prompts)
+# Deploy from saved config (auto-generated as quickec2.conf after every deploy)
 ./quickec2.sh --config quickec2.conf
 
 # Check instance status
@@ -202,9 +202,33 @@ quickec2/
 | File | Purpose | Persists |
 |------|---------|----------|
 | `resources.env` | All resource IDs for cleanup | Deleted after cleanup |
-| `quickec2.conf` | Saved config for replay | Kept |
+| `quickec2.conf` | Saved config for replay ([example](#example-config)) | Kept |
 | `user-data.sh` | Generated bootstrap script | Deleted after cleanup |
 | `*.pem` | SSH key (if created) | Deleted after cleanup |
+
+## Example Config
+
+Auto-generated as `quickec2.conf` after every deploy. Pass it to `--config` to redeploy the same setup:
+
+```bash
+AWS_PROFILE="myprofile"
+PROJECT_NAME="quickec2"
+AWS_REGION="eu-central-1"
+NETWORK_MODE="private"
+IP_TYPE="auto"
+INBOUND_PORTS=""
+INSTANCE_TYPE="t3.small"
+OS_TYPE="al2023"
+VOLUME_SIZE="20"
+VOLUME_TYPE="gp3"
+KEY_PAIR_OPTION="none"
+EXISTING_KEY_NAME=""
+SOFTWARE="python"
+NODE_VERSION=""
+PYTHON_VERSION="3.12"
+CREATE_S3=""
+S3_BUCKET_NAME=""
+```
 
 ## License
 
